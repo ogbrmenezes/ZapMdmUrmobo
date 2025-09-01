@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Painel: Controle Rollout → WhatsApp Web</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --fg:#e5e7eb; --accent:#2563eb; }
+    body{background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px}
+    h1,h2{margin:0 0 12px}
+    .card{background:#0b1220;border:1px solid #1f2937;border-radius:12px;padding:16px;margin:18px 0}
+    input[type="text"]{background:#0b1220;border:1px solid #24324a;color:var(--fg);border-radius:8px;padding:8px 10px;width:220px}
+    input[type="file"]{color:var(--fg)}
+    button,a.btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 18px;cursor:pointer}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    textarea{width:100%;height:220px;background:#0b1220;color:var(--fg);border:1px solid #24324a;border-radius:12px;padding:12px;resize:vertical}
+    .muted{color:var(--muted);font-size:13px}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid #334155}
+    .ok{color:#22c55e;border-color:#14532d}
+    .err{color:#f87171;border-color:#7f1d1d}
+    .spacer{height:8px}
+  </style>
+</head>
+<body>
+  <h1>Painel: Controle Rollout → WhatsApp Web</h1>
+
+  <div class="card">
+    <h2>1) Upload de planilhas</h2>
+    <div class="row">
+      <label>Controle Rollout – Urmobo (aba <b>LOJA</b>):</label>
+      <input type="file" id="f-rollout" />
+      <label>Dados Lojas – Fornecedores (aba <b>DADOS DE LOJAS BRASIL</b>):</label>
+      <input type="file" id="f-lojas" />
+      <button id="btn-enviar">Enviar</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="muted">
+      Rollout atual:
+      <span class="pill {{ 'ok' if status['rollout'] else 'err' }}">{{ 'OK' if status['rollout'] else 'FALTA' }}</span>
+      <span>{{ status['rollout_path'] }}</span> •
+      Lojas atual:
+      <span class="pill {{ 'ok' if status['lojas'] else 'err' }}">{{ 'OK' if status['lojas'] else 'FALTA' }}</span>
+      <span>{{ status['lojas_path'] }}</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2) Buscar e enviar</h2>
+    <div class="row">
+      <input type="text" id="numero" placeholder="Nº da loja" />
+      <button id="btn-buscar">Buscar</button>
+    </div>
+    <div class="spacer"></div>
+    <div id="alert" class="muted"></div>
+    <h3>Mensagem</h3>
+    <textarea id="mensagem" placeholder="Faça a busca para ver a mensagem..." spellcheck="false"></textarea>
+    <div class="spacer"></div>
+    <div class="row">
+      <a id="whats" class="btn" target="_blank">Abrir no WhatsApp Web</a>
+      <button id="btn-log">Registrar envio</button>
+      <a class="btn" href="/relatorio.xlsx">Exportar relatório (Excel)</a>
+    </div>
+  </div>
+
+  <script src="/static/main.js"></script>
+
+  <footer style="text-align: center; margin-top: 30px;">
+  <p>Desenvolvido por: Gabriel Menezes</p>
+</footer>
+
+</body>
+</html>

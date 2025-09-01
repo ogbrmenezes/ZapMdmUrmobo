@@ -1,0 +1,36 @@
+timestamp,loja_numero,loja_nome,regional,destinatario,meio,status,mensagem
+2025-08-29 17:34:04,201,Santa Cruz,RJ,5521971008268,whatsapp_web,registrado,"Bom dia, aqui é a Zhaz Soluções e estamos validando como está o andamento dos coletores no MDM.
+Loja 201 - Santa Cruz
+Regional: RJ
+
+COLETORES LOJA:
+- Modelo: TC21
+- Qtde Dispositivo (Físico): 35.0
+- Qtde Dispositivo Ativo (Urmobo): 34.0
+- Rollout (Pendentes): 1.0
+- Percentual: 97%
+
+COLETORES - RECEBIMENTO:
+- Modelo: Skorpio X4
+- Qtde Dispositivo (Físico): 4.0
+- Qtde Dispositivo Ativo (Urmobo): 0.0
+- Rollout (Pendentes): 4.0
+- Percentual: 0%
+
+Pode nos retornar como estão os coletores pendentes?"
+2025-09-01 10:18:11,073,,,5516996039875,whatsapp_web,registrado,"Bom dia, aqui é a Zhaz Soluções e estamos validando como está o andamento dos coletores no MDM.
+Loja 73 - Presidente Prudente
+Regional: SP INTERIOR
+
+⚠️ Pendências encontradas no rollout:
+- RECEBIMENTO • Skorpio X5: 0% (Físico: 4.0, Ativo: 0, Pendentes: 4.0 )
+
+Pode nos retornar como estão os coletores pendentes?"
+2025-09-01 11:52:53,73,Presidente Prudente,SP INTERIOR,5516996039875,whatsapp_web,registrado,"Bom dia, aqui é a Zhaz Soluções e estamos validando como está o andamento dos coletores no MDM.
+Loja 73 - Presidente Prudente
+Regional: SP INTERIOR
+
+⚠️ Pendências encontradas no rollout:
+- RECEBIMENTO • Skorpio X5: 0% (Físico: 4.0, Ativo: 0, Pendentes: 4.0 )
+
+Pode nos retornar como estão os coletores pendentes?"
