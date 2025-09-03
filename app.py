@@ -226,19 +226,28 @@ def fmt_percent(v):
         return f"{val:.0f}%"
     except:
         return v
-
 def is_complete(percent_value):
-    """True quando percentual representa 100% (aceita 1.0, 100, '100%', '100,00%')."""
+    """True quando percentual representa 100% (aceita 1.0, 100, '100%', '100,00%', etc.)."""
     try:
+        # Normaliza a string removendo espaços e tratando vírgulas como ponto
         s = str(percent_value).strip().replace('%', '').replace(',', '.')
+        
         if not s:
             return False
+        
+        # Converte para float
         v = float(s)
+        
+        # Caso o valor seja maior que 1 (por exemplo, '100'), converte para percentual
         if v > 1:
             v = v / 100.0
+        
+        # Verifica se o valor é 100% ou mais
         return v >= 1.0
-    except:
+    except ValueError:
+        # Se o valor não for convertível para float, retorna False
         return False
+
 
 
 def _pct_to_float(p):
