@@ -661,4 +661,4 @@ def relatorio():
 
 if __name__ == "__main__":
     # Para garantir flush imediato no terminal, você pode rodar com: python -u app.py
-    APP.run(host="0.0.0.0", port=5000, debug=True)
+    APP.run(host="0.0.0.0", port=5005, debug=True)
