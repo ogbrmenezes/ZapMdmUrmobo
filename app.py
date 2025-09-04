@@ -1,11 +1,37 @@
 from flask import Flask, render_template, request, jsonify, send_file
 import os, re, unicodedata, pandas as pd
 from datetime import datetime
+import sys, logging
 
 APP = Flask(__name__)
 ROOT = os.path.dirname(__file__)
 UPLOAD = os.path.join(ROOT, "uploads")
 os.makedirs(UPLOAD, exist_ok=True)
+
+# ---------------------------------
+# LOGGING: console (stdout) sempre
+# ---------------------------------
+fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+console = logging.StreamHandler(sys.stdout)
+console.setFormatter(fmt)
+console.setLevel(logging.INFO)
+
+root = logging.getLogger()
+root.setLevel(logging.INFO)
+# Evita handlers duplicados (debug reloader)
+if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+    root.addHandler(console)
+
+# Flask usa os mesmos handlers
+APP.logger.handlers = root.handlers
+APP.logger.setLevel(logging.INFO)
+
+# Se quiser também gravar em arquivo (opcional):
+# LOG_PATH = os.path.join(UPLOAD, "app.log")
+# file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+# file_handler.setFormatter(fmt)
+# file_handler.setLevel(logging.INFO)
+# root.addHandler(file_handler)
 
 # Se quiser fixar caminhos por variável de ambiente:
 LOJAS_PATH = os.environ.get("LOJAS_PATH")
@@ -93,7 +119,7 @@ def load_lojas(path):
     df = df[keep].copy()
     df = df[~(df.get("loja_numero").isna() & df.get("loja_nome").isna())].copy()
     df["key_loja_num"] = df.get("loja_numero", "").map(numkey)
-    df["key_loja_nome"] = df.get("loja_nome", "").map(norm)
+    df["key_loja_nome"] = df.get("loja_nome").map(norm)
     return df
 
 def load_rollout(path):
@@ -128,48 +154,38 @@ def load_rollout(path):
         vals = [v for v in dct.values() if v is not None]
         return min(vals) if vals else None
 
-    # Heurística robusta: o "Modelo" fica à esquerda do primeiro número do bloco.
+    # Heurística: "Modelo" fica à esquerda do primeiro número do bloco
     def resolve_model_idx(fallback_from_names, block_cols, search_back=3):
-        # 1) se já achamos por nome (fallback_from_names), use se for distinto/válido
         if fallback_from_names is not None:
             return fallback_from_names
-        # 2) tenta por posição: pega a menor coluna numérica do bloco e volta 1..3 colunas
-        right = min_defined(block_cols)  # primeira coluna do bloco (Físico/Ativo/Pendentes/Percentual)
+        right = min_defined(block_cols)
         if right is None:
             return None
         start = max(0, right - search_back)
-        # Varre da mais à esquerda para a direita até encostar em 'right'
         best = None
         for j in range(start, right):
-            # Preferência: cabeçalho com 'modelo'
             if "modelo" in names[j]:
                 return j
-            # Alternativa: coluna com maioria de strings (nome de modelo)
             col = base.iloc[:, j]
-            # conta quantos são strings não vazios
             non_na = col.dropna()
-            if len(non_na) == 0: 
+            if len(non_na) == 0:
                 continue
             sample = non_na.head(10).astype(str).str.strip()
-            # se grande parte são strings não-numéricas, é um bom candidato
             str_ratio = (sample.apply(lambda s: not s.replace('.', '', 1).isdigit() and s != "")).mean()
             if str_ratio >= 0.6:
                 best = j
         return best
 
-    # Resolve índices de Modelo para cada bloco
     m0_by_name = pick(im, 0)
     m1_by_name = pick(im, 1)
     m0 = resolve_model_idx(m0_by_name, b0, search_back=4)
     m1 = resolve_model_idx(m1_by_name, b1, search_back=4)
 
-    # Se ainda assim o modelo 1 cair no mesmo do 0, puxa a coluna anterior ao 1º número do bloco 1
     if m1 is not None and m0 is not None and m1 == m0:
         right1 = min_defined(b1)
         if right1 is not None and right1 - 1 >= 0:
             m1 = right1 - 1
 
-    # Helper para extrair coluna segura
     def col(i):
         import pandas as _pd
         return base.iloc[:, i] if i is not None and i < base.shape[1] else _pd.Series([None] * len(base))
@@ -195,16 +211,12 @@ def load_rollout(path):
         "receb_percentual":                pd.to_numeric(col(b1["per"]), errors="coerce"),
     })
 
-    # Chaves & limpeza
     out["key_loja_num"]  = out["loja_numero"].map(numkey)
     out["key_loja_nome"] = out["loja_nome"].map(norm)
-    out = out[out["key_loja_num"] != ""].copy()
 
-    # Remove linhas totalmente vazias nos dois blocos
-    sec1 = out[["coletores_loja_modelo","coletores_loja_qtde_fisico","coletores_loja_qtde_ativo","coletores_loja_qtde_pendentes","coletores_loja_percentual"]]
-    sec2 = out[["receb_modelo","receb_qtde_fisico","receb_qtde_ativo","receb_qtde_pendentes","receb_percentual"]]
-    mask_all_empty = (sec1.isna().all(axis=1) & sec2.isna().all(axis=1))
-    out = out[~mask_all_empty].copy()
+    # IMPORTANTE: NÃO descartar linhas vazias aqui.
+    # Mantemos todas as lojas com número válido para chegar às 338.
+    out = out[out["key_loja_num"] != ""].copy()
 
     return out
 
@@ -226,39 +238,30 @@ def fmt_percent(v):
         return f"{val:.0f}%"
     except:
         return v
+
 def is_complete(percent_value):
-    """True quando percentual representa 100% (aceita 1.0, 100, '100%', '100,00%', etc.)."""
+    """True quando percentual representa 100% (aceita 1.0, 100, '100%', '100,00%')."""
     try:
-        # Normaliza a string removendo espaços e tratando vírgulas como ponto
         s = str(percent_value).strip().replace('%', '').replace(',', '.')
-        
         if not s:
             return False
-        
-        # Converte para float
         v = float(s)
-        
-        # Caso o valor seja maior que 1 (por exemplo, '100'), converte para percentual
         if v > 1:
             v = v / 100.0
-        
-        # Verifica se o valor é 100% ou mais
         return v >= 1.0
     except ValueError:
-        # Se o valor não for convertível para float, retorna False
         return False
 
-
-
 def _pct_to_float(p):
-    """Converte 100, '100%', '1.0', 0.75 -> 100.0, 100.0, 100.0, 75.0"""
+    """Converte valores de percentual para float (0-100)."""
     try:
-        s = str(p).strip().replace('%','').replace(',', '.')
+        if p is None or (isinstance(p, float) and pd.isna(p)):
+            return None
+        s = str(p).strip().replace('%', '').replace(',', '.')
         if s == '':
             return None
         v = float(s)
-        # se vier 0-1, trata como fração
-        if v <= 1.0:
+        if 0 <= v <= 1.0:
             v = v * 100.0
         return v
     except:
@@ -267,8 +270,6 @@ def _pct_to_float(p):
 def _modelo_str(v):
     s = str(v).strip()
     return s if s else "(sem modelo)"
-
-
 
 def build_section(title, items):
     lines = []
@@ -281,16 +282,12 @@ def build_section(title, items):
                 continue
         except:
             pass
-
-        # se for Percentual, formata
         lbl_norm = str(label).strip().lower()
         if "percentual" in lbl_norm:
             val = fmt_percent(val)
-
         s = str(val).strip()
         if s == "" or s.lower() == "nan":
             continue
-
         lines.append(f"- {label}: {s}")
 
     if not lines:
@@ -298,7 +295,6 @@ def build_section(title, items):
     return f"{title}\n" + "\n".join(lines) + "\n\n"
 
 def build_msg(row):
-    # Bloqueia contato quando já está 100%
     if is_complete(row.get("coletores_loja_percentual")):
         return "Loja já está 100% concluída, não precisa de contato."
 
@@ -326,13 +322,11 @@ def build_msg(row):
 
     return header + sec_loja + sec_receb + "Pode nos retornar como estão os coletores pendentes?"
 
-
 def build_msg_multi(df_rows):
     """Monta mensagem considerando todos os modelos da loja (Loja e Recebimento)."""
     if df_rows.empty:
         return "Sem dados para a loja."
 
-    # Cabeçalho (pega da primeira linha)
     r0 = df_rows.iloc[0]
     header = (
         "Bom dia, aqui é a Zhaz Soluções e estamos validando como está o andamento dos coletores no MDM URMOBO.\n"
@@ -340,41 +334,110 @@ def build_msg_multi(df_rows):
         f"Regional: {r0.get('regional','')}\n\n"
     )
 
-    pend_lines = []
+    def _is_blank(x):
+        if x is None:
+            return True
+        if isinstance(x, float) and pd.isna(x):
+            return True
+        s = str(x).strip().lower()
+        return s in ("", "-", "—", "nan", "none")
 
-    # Bloco COLETORES LOJA
+    def _to_int(x):
+        try:
+            if _is_blank(x): return None
+            return int(float(str(x).replace(",", ".").strip()))
+        except:
+            return None
+
+    def _pct_or_calc(pct_raw, fis, ati):
+        p = _pct_to_float(pct_raw)
+        if p is not None:
+            return p
+        f, a = _to_int(fis), _to_int(ati)
+        if f is None or f <= 0 or a is None:
+            return None
+        return (a / f) * 100.0
+
+    pend_lines = []
+    nao_preenchidos = []
+    total_loja = 0
+    total_receb = 0
+
+    # --- COLETORES LOJA ---
     for _, r in df_rows.iterrows():
         modelo = r.get("coletores_loja_modelo")
-        p = _pct_to_float(r.get("coletores_loja_percentual"))
-        # considera como pendente se existir modelo e p<100
-        if pd.notna(modelo) and (p is None or p < 100.0):
-            fis = r.get("coletores_loja_qtde_fisico")
-            ati = r.get("coletores_loja_qtde_ativo")
-            pen = r.get("coletores_loja_qtde_pendentes")
-            pend_lines.append(
-                f"- COLETORES LOJA • {_modelo_str(modelo)}: {fmt_percent(p)}"
-                f" (Físico: {fis or 0}, Ativo: {ati or 0}, Pendentes: {pen if not pd.isna(pen) else '?'} )"
-            )
+        fis = r.get("coletores_loja_qtde_fisico")
+        ati = r.get("coletores_loja_qtde_ativo")
+        pen = r.get("coletores_loja_qtde_pendentes")
+        p   = _pct_or_calc(r.get("coletores_loja_percentual"), fis, ati)
 
-    # Bloco RECEBIMENTO
+        if _is_blank(modelo) and _to_int(fis) is None and _to_int(ati) is None:
+            nao_preenchidos.append(f"- COLETORES LOJA • {_modelo_str(modelo or '(sem modelo)')}: não preenchido")
+            continue
+
+        fis_i = _to_int(fis)
+        ati_i = _to_int(ati)
+        falta = None
+        if fis_i is not None and ati_i is not None:
+            falta = max(fis_i - ati_i, 0)
+
+        if p is None:
+            nao_preenchidos.append(f"- COLETORES LOJA • {_modelo_str(modelo or '(sem modelo)')}: dados insuficientes")
+            continue
+
+        if p < 100.0:
+            pend_lines.append(
+                f"- COLETORES LOJA • {_modelo_str(modelo)}: {fmt_percent(p)} "
+                f"(Físico: {fis_i if fis_i is not None else 0}, "
+                f"Ativo: {ati_i if ati_i is not None else 0}, "
+                f"Pendentes: {falta if falta is not None else (int(pen) if pd.notna(pen) else 0)})"
+            )
+            if falta is not None:
+                total_loja += falta
+
+    # --- RECEBIMENTO ---
     for _, r in df_rows.iterrows():
         modelo = r.get("receb_modelo")
-        p = _pct_to_float(r.get("receb_percentual"))
-        if pd.notna(modelo) and (p is None or p < 100.0):
-            fis = r.get("receb_qtde_fisico")
-            ati = r.get("receb_qtde_ativo")
-            pen = r.get("receb_qtde_pendentes")
-            pend_lines.append(
-                f"- RECEBIMENTO • {_modelo_str(modelo)}: {fmt_percent(p)}"
-                f" (Físico: {fis or 0}, Ativo: {ati or 0}, Pendentes: {pen if not pd.isna(pen) else '?'} )"
-            )
+        fis = r.get("receb_qtde_fisico")
+        ati = r.get("receb_qtde_ativo")
+        pen = r.get("receb_qtde_pendentes")
+        p   = _pct_or_calc(r.get("receb_percentual"), fis, ati)
 
-    if not pend_lines:
+        if _is_blank(modelo) and _to_int(fis) is None and _to_int(ati) is None:
+            nao_preenchidos.append(f"- RECEBIMENTO • {_modelo_str(modelo or '(sem modelo)')}: não preenchido")
+            continue
+
+        fis_i = _to_int(fis)
+        ati_i = _to_int(ati)
+        falta = None
+        if fis_i is not None and ati_i is not None:
+            falta = max(fis_i - ati_i, 0)
+
+        if p is None:
+            nao_preenchidos.append(f"- RECEBIMENTO • {_modelo_str(modelo or '(sem modelo)')}: dados insuficientes")
+            continue
+
+        if p < 100.0:
+            pend_lines.append(
+                f"- RECEBIMENTO • {_modelo_str(modelo)}: {fmt_percent(p)} "
+                f"(Físico: {fis_i if fis_i is not None else 0}, "
+                f"Ativo: {ati_i if ati_i is not None else 0}, "
+                f"Pendentes: {falta if falta is not None else (int(pen) if pd.notna(pen) else 0)})"
+            )
+            if falta is not None:
+                total_receb += falta
+
+    if not pend_lines and not nao_preenchidos:
         return f"*** Loja {r0.get('loja_numero','?')} está 100% concluída — não precisa de contato. ***"
 
-    corpo = "⚠️ Pendências encontradas no rollout:\n" + "\n".join(pend_lines)
-    return header + corpo + "\n\nPode nos retornar como estão os coletores pendentes?"
+    corpo = ""
+    if nao_preenchidos:
+        corpo += "⚠️ Campos não preenchidos:\n" + "\n".join(nao_preenchidos) + "\n\n"
+    if pend_lines:
+        corpo += "⚠️ Pendências encontradas no rollout:\n" + "\n".join(pend_lines) + "\n\n"
+        corpo += f"Resumo de pendências: Loja: {total_loja} | Recebimento: {total_receb} | Total: {total_loja + total_receb}\n\n"
 
+    return header + corpo + "Pode nos retornar como estão os coletores pendentes / não preenchidos?"
 
 # -------------------------
 # Rotas
@@ -398,6 +461,8 @@ def upload():
 def buscar():
     # --- entrada ---
     numero = request.args.get("numero", "").strip()
+    APP.logger.info("➡️ /buscar chamado | numero=%s", numero)
+
     if not numero:
         return jsonify({"ok": False, "error": "Informe o número da loja."}), 400
 
@@ -417,26 +482,15 @@ def buscar():
     key = numkey(numero)
     df_loja = roll[roll["key_loja_num"] == key].copy()
     if df_loja.empty:
+        APP.logger.info("ℹ️ Loja %s não encontrada no rollout (ou sem número).", numero)
         return jsonify({"ok": False, "error": "Loja não encontrada no rollout (ou sem dados preenchidos)."}), 404
 
     # --- util local: normaliza NaN -> None pra JSON seguro ---
     def _json_safe_df(df):
-        return df.applymap(lambda v: None if (pd.isna(v) if hasattr(pd, "isna") else v is None) else v)
+        # Substitui applymap (deprecado) por map
+        return df.map(lambda v: None if (pd.isna(v) if hasattr(pd, "isna") else v is None) else v)
 
     df_json = _json_safe_df(df_loja)
-
-    # --- verifica se TODOS os modelos (Loja e Recebimento) estão 100% ---
-    todos_ok = True
-    for _, r in df_loja.iterrows():
-        has_loja  = pd.notna(r.get("coletores_loja_modelo"))
-        has_receb = pd.notna(r.get("receb_modelo"))
-
-        p1 = _pct_to_float(r.get("coletores_loja_percentual")) if has_loja else 100.0
-        p2 = _pct_to_float(r.get("receb_percentual"))          if has_receb else 100.0
-
-        if (p1 is None or p1 < 100.0) or (p2 is None or p2 < 100.0):
-            todos_ok = False
-            break
 
     # --- telefone/celular destino ---
     lj = lojas[lojas["key_loja_num"] == key].head(1)
@@ -450,19 +504,119 @@ def buscar():
             tel = "55" + tel
         dest = tel
 
+    # ===== Validação de LOJA E RECEBIMENTO (sem excluir nada) =====
+    def _is_blank(x):
+        if x is None:
+            return True
+        if isinstance(x, float) and pd.isna(x):
+            return True
+        s = str(x).strip().lower()
+        return s in ("", "-", "—", "nan", "none")
+
+    def _to_int(x):
+        try:
+            if _is_blank(x): return None
+            return int(float(str(x).replace(",", ".").strip()))
+        except:
+            return None
+
+    def _pct_or_calc(pct_raw, fis, ati):
+        # Tenta ler %; se NaN/None (ex.: #DIV/0!), tenta calcular por ativo/físico
+        p = _pct_to_float(pct_raw)
+        if p is not None:
+            return p
+        f, a = _to_int(fis), _to_int(ati)
+        if f is None or f <= 0 or a is None:
+            return None  # sem como calcular => não concluído
+        return (a / f) * 100.0
+
+    def _section_present(r, keys):
+        # Seção é "presente" se QUALQUER campo da seção vier preenchido
+        return any(not _is_blank(r.get(k)) for k in keys)
+
+    LOJA_KEYS = [
+        "coletores_loja_modelo",
+        "coletores_loja_qtde_fisico",
+        "coletores_loja_qtde_ativo",
+        "coletores_loja_qtde_pendentes",
+        "coletores_loja_percentual",
+    ]
+    RECEB_KEYS = [
+        "receb_modelo",
+        "receb_qtde_fisico",
+        "receb_qtde_ativo",
+        "receb_qtde_pendentes",
+        "receb_percentual",
+    ]
+
+    encontrou_loja = False
+    encontrou_receb = False
+    todos_ok = True
+
+    for _, r in df_loja.iterrows():
+        # --- Seção LOJA ---
+        if _section_present(r, LOJA_KEYS):
+            encontrou_loja = True
+            p_loja = _pct_or_calc(
+                r.get("coletores_loja_percentual"),
+                r.get("coletores_loja_qtde_fisico"),
+                r.get("coletores_loja_qtde_ativo"),
+            )
+            if p_loja is None or p_loja < 100.0:
+                APP.logger.info("⛔ Loja %s: seção LOJA não concluída (%%=%s)", numero, p_loja)
+                todos_ok = False
+
+        # --- Seção RECEBIMENTO ---
+        if _section_present(r, RECEB_KEYS):
+            encontrou_receb = True
+            p_receb = _pct_or_calc(
+                r.get("receb_percentual"),
+                r.get("receb_qtde_fisico"),
+                r.get("receb_qtde_ativo"),
+            )
+            if p_receb is None or p_receb < 100.0:
+                APP.logger.info("⛔ Loja %s: seção RECEBIMENTO não concluída (%%=%s)", numero, p_receb)
+                todos_ok = False
+
+    # Se nenhuma das duas seções tem dados, é "sem dados preenchidos"
+    sem_dados_loja = not encontrou_loja
+    sem_dados_receb = not encontrou_receb
+    if sem_dados_loja and sem_dados_receb:
+        APP.logger.info("ℹ️ Loja %s: LOJA e RECEBIMENTO sem dados preenchidos.", numero)
+        todos_ok = False
+
     # --- respostas ---
-    if todos_ok:
+    if todos_ok and (encontrou_loja or encontrou_receb):
         r0 = df_loja.iloc[0]
+        APP.logger.info("✔️ Loja %s: LOJA e/ou RECEBIMENTO concluídos (100%%).", numero)
         return jsonify({
             "ok": True,
             "dados": df_json.to_dict(orient="records"),
-            "mensagem": f"*** Loja {r0.get('loja_numero')} está 100% concluída — não precisa de contato. ***",
+            "mensagem": f"*** Loja {r0.get('loja_numero')} está 100% concluída (LOJA e RECEBIMENTO) — não precisa de contato. ***",
             "destinatario": dest,
             "concluida": True
         })
 
-    # Há pendências -> monta mensagem listando apenas os modelos <100%
-    msg = build_msg_multi(df_loja)
+    # Não está 100% — decidir mensagem:
+    if sem_dados_loja and sem_dados_receb:
+        msg = (
+            f"Loja {numero}: seções LOJA e RECEBIMENTO sem dados preenchidos no rollout.\n"
+            f"Por favor, atualizar Físico/Ativo/Pendentes para seguirmos."
+        )
+    elif sem_dados_loja:
+        msg = (
+            f"Loja {numero}: seção LOJA sem dados preenchidos no rollout.\n"
+            f"Por favor, atualizar Físico/Ativo/Pendentes para LOJA."
+        )
+    elif sem_dados_receb:
+        msg = (
+            f"Loja {numero}: seção RECEBIMENTO sem dados preenchidos no rollout.\n"
+            f"Por favor, atualizar Físico/Ativo/Pendentes para RECEBIMENTO."
+        )
+    else:
+        # Tem dados nas seções e ao menos uma não está 100% -> listar pendências detalhadas
+        msg = build_msg_multi(df_loja)
+
     return jsonify({
         "ok": True,
         "dados": df_json.to_dict(orient="records"),
@@ -470,8 +624,6 @@ def buscar():
         "destinatario": dest,
         "concluida": False
     })
-
-
 
 def append_log(data):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -508,4 +660,5 @@ def relatorio():
     return send_file(out, as_attachment=True, download_name="relatorio_envios.xlsx")
 
 if __name__ == "__main__":
+    # Para garantir flush imediato no terminal, você pode rodar com: python -u app.py
     APP.run(host="0.0.0.0", port=5000, debug=True)
